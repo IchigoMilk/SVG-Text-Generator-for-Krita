@@ -1,0 +1,18 @@
+<text
+	text-rendering="auto"
+	fill="#ffffffff"
+	stroke-opacity="0"
+	stroke="#000000"
+	stroke-width="0"
+	stroke-linecap="square"
+	stroke-linejoin="bevel"
+	letter-spacing="0.2"
+	writing-mode="vertical-rl"
+	style="text-align: start;
+		text-align-last: auto;
+		font-family: F66ElleminEL;
+		font-size: 8;
+		line-height: 1.2;
+		white-space: pre-line;">
+(TEXT HERE)
+</text>

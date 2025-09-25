@@ -1,0 +1,18 @@
+# VS Code settings
+.vscode/
+
+# Generated SVG files
+deploy/
+
+# Krita files directory
+kra/
+
+# Text files (except sample.txt)
+scripts/*
+!scripts/sample.txt
+
+# Temporary files
+*.tmp
+*.bak
+*~
+*.work
