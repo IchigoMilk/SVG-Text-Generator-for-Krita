@@ -13,10 +13,17 @@ def get_text_width(text):
     """
     return len(text)
 
+def is_japanese_punctuation(char):
+    """
+    Check if a character is Japanese punctuation that should not appear at line start.
+    """
+    return char in '。、？！'
+
 def wrap_text(text, max_width):
     """
     Wrap text to specified width, counting each character as 1.
-    Each line will not exceed max_width in character count.
+    Prevents Japanese punctuation from appearing at line start,
+    even if it means exceeding the max_width.
     """
     lines = text.split('\n')
     wrapped_lines = []
@@ -25,34 +32,40 @@ def wrap_text(text, max_width):
         if not line.strip():  # Empty line
             wrapped_lines.append('')
             continue
-            
-        current_line = ''
-        words = line.split()
         
-        for word in words:
-            # Check if adding this word would exceed the limit
-            test_line = current_line + (' ' if current_line else '') + word
+        # For Japanese text, process character by character
+        current_line = ''
+        i = 0
+        while i < len(line):
+            char = line[i]
+            
+            # Skip leading spaces
+            if not current_line and char == ' ':
+                i += 1
+                continue
+            
+            # Check if adding this character would exceed the limit
+            test_line = current_line + char
             
             if len(test_line) <= max_width:
                 current_line = test_line
             else:
-                # If current_line is not empty, save it and start new line
-                if current_line:
+                # Check if this character is Japanese punctuation
+                if is_japanese_punctuation(char):
+                    # Add punctuation to current line even if it exceeds max_width
+                    current_line += char
                     wrapped_lines.append(current_line)
-                    current_line = word
+                    current_line = ''
                 else:
-                    # Single word is too long, need to break it
-                    char_line = ''
-                    for char in word:
-                        test_char_line = char_line + char
-                        if len(test_char_line) <= max_width:
-                            char_line = test_char_line
-                        else:
-                            if char_line:
-                                wrapped_lines.append(char_line)
-                            char_line = char
-                    if char_line:
-                        current_line = char_line
+                    # If current line is not empty, save it and start new line
+                    if current_line:
+                        wrapped_lines.append(current_line)
+                        current_line = char
+                    else:
+                        # Single character that doesn't fit - shouldn't happen normally
+                        current_line = char
+            
+            i += 1
         
         # Add any remaining text in current_line
         if current_line:
