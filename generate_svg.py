@@ -17,7 +17,7 @@ def is_japanese_punctuation(char):
     """
     Check if a character is Japanese punctuation that should not appear at line start.
     """
-    return char in '。、？！'
+    return char in '。、？！「」'
 
 def wrap_text(text, max_width):
     """
