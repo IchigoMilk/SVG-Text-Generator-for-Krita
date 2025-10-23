@@ -5,6 +5,8 @@ import os
 import sys
 import glob
 import argparse
+import re
+from decimal import Decimal, InvalidOperation
 
 def get_text_width(text):
     """
@@ -21,57 +23,78 @@ def is_japanese_punctuation(char):
 
 def wrap_text(text, max_width):
     """
-    Wrap text to specified width, counting each character as 1.
-    Prevents Japanese punctuation from appearing at line start,
-    even if it means exceeding the max_width.
+    Wrap text to specified width while tracking indentation requests.
+    Leading full-width spaces trigger indentation via dy attribute instead of being rendered.
+    Returns a list of dictionaries containing line text and indent metadata.
     """
     lines = text.split('\n')
     wrapped_lines = []
-    
-    for line in lines:
-        if not line.strip():  # Empty line
-            wrapped_lines.append('')
+
+    for raw_line in lines:
+        if not raw_line.strip():
+            wrapped_lines.append({'text': '', 'indent_level': 0, 'is_blank': True})
             continue
-        
-        # For Japanese text, process character by character
+
+        indent_level = 0
+        while indent_level < len(raw_line) and raw_line[indent_level] == '\u3000':
+            indent_level += 1
+
+        content_line = raw_line[indent_level:]
+
+        if not content_line:
+            wrapped_lines.append({'text': '', 'indent_level': 0, 'is_blank': True})
+            continue
+
+        indent_applied = False
         current_line = ''
         i = 0
-        while i < len(line):
-            char = line[i]
-            
-            # Skip leading spaces
+
+        while i < len(content_line):
+            char = content_line[i]
+
             if not current_line and char == ' ':
                 i += 1
                 continue
-            
-            # Check if adding this character would exceed the limit
+
+            line_limit = max_width - indent_level if indent_level and not indent_applied else max_width
+            if line_limit < 1:
+                line_limit = 1
+
             test_line = current_line + char
-            
-            if len(test_line) <= max_width:
+
+            if len(test_line) <= line_limit:
                 current_line = test_line
-            else:
-                # Check if this character is Japanese punctuation
-                if is_japanese_punctuation(char):
-                    # Add punctuation to current line even if it exceeds max_width
-                    current_line += char
-                    wrapped_lines.append(current_line)
-                    current_line = ''
-                else:
-                    # If current line is not empty, save it and start new line
-                    if current_line:
-                        wrapped_lines.append(current_line)
-                        current_line = char
-                    else:
-                        # Single character that doesn't fit - shouldn't happen normally
-                        current_line = char
-            
+                i += 1
+                continue
+
+            if is_japanese_punctuation(char):
+                current_line += char
+                indent_for_line = indent_level if indent_level and not indent_applied else 0
+                wrapped_lines.append({'text': current_line, 'indent_level': indent_for_line, 'is_blank': False})
+                indent_applied = True
+                current_line = ''
+                i += 1
+                continue
+
+            if current_line:
+                indent_for_line = indent_level if indent_level and not indent_applied else 0
+                wrapped_lines.append({'text': current_line, 'indent_level': indent_for_line, 'is_blank': False})
+                indent_applied = True
+                current_line = ''
+                continue
+
+            current_line = char
+            indent_for_line = indent_level if indent_level and not indent_applied else 0
+            wrapped_lines.append({'text': current_line, 'indent_level': indent_for_line, 'is_blank': False})
+            indent_applied = True
+            current_line = ''
             i += 1
-        
-        # Add any remaining text in current_line
+
         if current_line:
-            wrapped_lines.append(current_line)
-    
-    return '\n'.join(wrapped_lines)
+            indent_for_line = indent_level if indent_level and not indent_applied else 0
+            wrapped_lines.append({'text': current_line, 'indent_level': indent_for_line, 'is_blank': False})
+
+    return wrapped_lines
 
 def read_template(template_path):
     """Read the SVG template file."""
@@ -89,14 +112,78 @@ def read_text_file(text_path):
     """Read a text file and return its content."""
     try:
         with open(text_path, 'r', encoding='utf-8') as f:
-            return f.read().strip()
+            return f.read().rstrip('\n')
     except Exception as e:
         print(f"Error reading text file {text_path}: {e}", file=sys.stderr)
         return ""
 
-def generate_svg(template_content, text_content):
-    """Generate SVG by replacing (TEXT HERE) with the provided text."""
-    return template_content.replace('(TEXT HERE)', text_content)
+def escape_xml(text):
+    """Escape characters that are not safe inside XML text nodes."""
+    return (text.replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+                .replace('"', '&quot;')
+                .replace("'", '&apos;'))
+
+
+def format_decimal(value):
+    """Format Decimal values without unnecessary trailing zeros."""
+    normalized = value.normalize()
+    string_value = format(normalized, 'f')
+    if '.' in string_value:
+        string_value = string_value.rstrip('0').rstrip('.')
+    return string_value or '0'
+
+
+def extract_font_size(template_content):
+    """Extract font-size numeric value and unit from the SVG template."""
+    patterns = [
+        r'font-size\s*:\s*([0-9]*\.?[0-9]+)([a-z%]*)',
+        r'font-size\s*=\s*"([0-9]*\.?[0-9]+)([a-z%]*)"'
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, template_content, re.IGNORECASE)
+        if match:
+            numeric_part, unit = match.groups()
+            try:
+                return Decimal(numeric_part), unit
+            except InvalidOperation:
+                continue
+
+    return None, ''
+
+
+def lines_to_tspan(wrapped_lines, font_size_value, font_size_unit):
+    """Convert wrapped line metadata into SVG tspan elements."""
+    tspan_elements = []
+
+    for line in wrapped_lines:
+        if line.get('is_blank'):
+            tspan_elements.append('\t<tspan y="0"></tspan>')
+            continue
+
+        text = escape_xml(line['text'])
+        indent_level = line.get('indent_level', 0)
+        if font_size_value is not None:
+            if indent_level:
+                y_value = font_size_value * indent_level
+                y_text = f"{format_decimal(y_value)}{font_size_unit}"
+            else:
+                y_text = '0'
+            attrs = f' y="{y_text}"'
+        else:
+            attrs = ''
+
+        tspan_elements.append(f'\t<tspan{attrs}>{text}</tspan>')
+
+    return '\n'.join(tspan_elements)
+
+
+def generate_svg(template_content, wrapped_lines, font_size_value, font_size_unit):
+    """Generate SVG with per-line tspan elements and optional indentation."""
+    tspan_content = lines_to_tspan(wrapped_lines, font_size_value, font_size_unit)
+    return template_content.replace('(TEXT HERE)', tspan_content)
 
 def main():
     parser = argparse.ArgumentParser(description='Generate SVG files from text files using template')
@@ -114,9 +201,14 @@ def main():
     # Read template
     template_content = read_template(args.template)
     
+    font_size_value, font_size_unit = extract_font_size(template_content)
+    if font_size_value is None:
+        print(f"Error: Could not determine font-size from template {args.template}", file=sys.stderr)
+        sys.exit(1)
+
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
     # Find all .txt files in scripts directory
     txt_pattern = os.path.join(args.scripts_dir, '*.txt')
     txt_files = glob.glob(txt_pattern)
@@ -143,9 +235,9 @@ def main():
         
         # Apply text wrapping
         wrapped_text = wrap_text(text_content, args.line_width)
-        
+
         # Generate SVG
-        svg_content = generate_svg(template_content, wrapped_text)
+        svg_content = generate_svg(template_content, wrapped_text, font_size_value, font_size_unit)
         
         # Write output file
         try:
